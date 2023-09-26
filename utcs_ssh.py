@@ -4,7 +4,9 @@ import click
 from dataclasses import dataclass
 import random
 import getpass
+import os
 
+UTCS_SSH_USERNAME_ENV_KEY = "UTCS_SSH_USERNAME"
 LAB_STATUS_URL = "https://apps.cs.utexas.edu/unixlabstatus/"
 HOST_TEMPLATE = "{}.cs.utexas.edu"
 SSH_COMMAND_TEMPLATE = "ssh {}@{}"
@@ -34,17 +36,57 @@ def get_all_machines() -> list[Machine]:
     return machines
 
 
-def main():
-    machines = get_all_machines()
+def filter_machines(machines: list[Machine]) -> list[Machine]:
     online_machines = [machine for machine in machines if machine.active]
+
     lowest_user_count = min(machine.num_users for machine in online_machines)
     lowest_user_count_machines = [machine for machine in online_machines if machine.num_users == lowest_user_count]
+
     valid_machines = lowest_user_count_machines
     if any(not machine.high_avg_load for machine in lowest_user_count_machines):
         valid_machines = [machine for machine in lowest_user_count_machines if not machine.high_avg_load]
+
+    return valid_machines
+
+
+@click.command()
+@click.argument("username", required=False)
+@click.option("--comname", is_flag=True, help="Print the computer's name instead of running the ssh command",
+              default=False)
+@click.option("--hostname", is_flag=True, help="Print the hostname instead of running the ssh command", default=False)
+@click.option("--command", is_flag=True, help="Print the ssh command instead of running it", default=False)
+def cli(username: str, comname: bool, hostname: bool, command: bool):
+    if (comname + hostname + command) > 1:
+        raise click.ClickException("Cannot specify more than one --comname, --hostname, --command")
+
+    if not username:
+        if UTCS_SSH_USERNAME_ENV_KEY in os.environ:
+            username = os.environ[UTCS_SSH_USERNAME_ENV_KEY]
+        else:
+            username = getpass.getuser()
+
+    machines = get_all_machines()
+    valid_machines = filter_machines(machines)
+
+    if not valid_machines:
+        raise click.ClickException("No valid machines found")
+
     machine = random.choice(valid_machines)
-    print(machine.host)
+
+    if comname:
+        click.echo(machine.host)
+        return
+
+    if hostname:
+        click.echo(HOST_TEMPLATE.format(machine.host))
+        return
+
+    if command:
+        click.echo(SSH_COMMAND_TEMPLATE.format(username, HOST_TEMPLATE.format(machine.host)))
+        return
+
+    os.system(SSH_COMMAND_TEMPLATE.format(username, HOST_TEMPLATE.format(machine.host)))
 
 
 if __name__ == "__main__":
-    main()
+    cli()
